@@ -1,0 +1,81 @@
+version: 2.1
+
+orbs:
+  node: circleci/node@4.1.0
+  aws-s3: circleci/aws-s3@2.0.0
+  aws-cli: circleci/aws-cli@1.3.1
+
+commands:
+  build-package:
+    parameters:
+      package:
+        type: string
+    steps:
+      - checkout
+      - node/install-packages:
+          app-dir: packages/<<parameters.package>>/
+          override-ci-command: npm install
+      - run:
+          command: |
+            cd packages/<<parameters.package>>/
+            npm run build
+
+  deploy-to-s3:
+    parameters:
+      package:
+        type: string
+    steps:
+      - aws-s3/sync:
+          from: packages/<<parameters.package>>/dist
+          to: 's3://${AWS_S3_BUCKET_NAME}/<<parameters.package>>/latest'
+
+  add-invalidation:
+    parameters:
+      package:
+        type: string
+      file:
+        default: "remoteEntry.js"
+        type: string
+    steps:
+      - aws-cli/setup:
+          aws-region: AWS_REGION
+      - run: 
+          command: |
+            aws cloudfront create-invalidation --distribution-id ${AWS_DISTRIBUTION_ID} --paths "/<<parameters.package>>/latest/<<parameters.file>>"       
+
+
+jobs:
+  build-and-deploy:
+    parameters:
+      package:
+        type: string
+      file:
+        default: "remoteEntry.js"
+        type: string
+    docker:
+      - image: 'cimg/python:2.7-node'
+    steps:
+      - build-package:
+          package: <<parameters.package>>
+      - deploy-to-s3:
+          package: <<parameters.package>>
+      - add-invalidation:
+          package: <<parameters.package>>
+          file: <<parameters.file>>
+
+workflows:
+  deploy-to-production:
+    jobs:
+      - build-and-deploy:
+          name: build-deploy-auth
+          package: auth
+      - build-and-deploy:
+          name: build-deploy-container
+          package: container
+          file: "index.html"
+      - build-and-deploy:
+          name: build-deploy-dashboard
+          package: dashboard
+      - build-and-deploy:
+          name: build-deploy-marketing
+          package: marketing
